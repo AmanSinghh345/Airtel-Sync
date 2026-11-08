@@ -10,6 +10,25 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api');
 
+  // Root endpoint to prevent "Cannot GET /" 404 when visiting the base URL in browser
+  const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.get('/', (req: any, res: any) => {
+    res.json({
+      service: 'UdyamOne Enterprise Backend API',
+      status: 'ONLINE',
+      version: '1.0.0',
+      frontendUrl: process.env.FRONTEND_URL || 'https://web-nu-topaz-66.vercel.app',
+      endpoints: {
+        health: '/api/health',
+        catalog: '/api/catalog/products',
+        advisor: '/api/advisor/chat',
+        kycVerify: '/api/kyc/verify',
+        analytics: '/api/analytics/funnel',
+        staffLogin: '/api/auth/staff/login'
+      }
+    });
+  });
+
   // Production CORS: allow configured FRONTEND_URL or wildcard
   const frontendUrl = process.env.FRONTEND_URL;
   app.enableCors({
