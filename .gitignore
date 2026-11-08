@@ -19,6 +19,7 @@ out/
 .turbo/
 .cache/
 *.tsbuildinfo
+.neon/
 
 # Testing & Coverage
 coverage/
@@ -54,3 +55,4 @@ Thumbs.db
 Desktop.ini
 .vscode/
 .idea/
+.neon
