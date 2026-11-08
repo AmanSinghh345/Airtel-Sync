@@ -232,8 +232,9 @@ export class DeterministicExtractionService {
 
     // 4. Employee Count (Headcount)
     const empMatch =
-      text.match(/(\d+)\s*(?:employees?|staff|people|workers?|log|aadmi|bande|members?|कर्मचारी|लोग)/i) ||
-      text.match(/(?:team size|team of|headcount of|approx|around)\s*(?:is|of|hai)?\s*(\d+)/i);
+      text.match(/(\d+)[\s-]*(?:employees?|staff|people|person|workers?|users?|seats?|log|aadmi|bande|members?|कर्मचारी|लोग)/i) ||
+      text.match(/(?:team size|team of|headcount of|approx|around|users?|staff)\s*(?:is|of|hai)?\s*(\d+)/i) ||
+      (merged.employeeCount === undefined && text.match(/^\s*(?:we have|approx|around|mere paas|hamare paas|total)?\s*(\d+)\s*(?:users?|people|person|staff|employees?)?\s*$/i));
 
     if (empMatch && empMatch[1]) {
       const parsedEmp = parseInt(empMatch[1], 10);
@@ -245,7 +246,7 @@ export class DeterministicExtractionService {
     // 5. Number of Sites / Branches
     const sitesMatch =
       text.match(/(\d+)\s*(?:[\w\u0900-\u097F\s]{0,10})?(?:sites?|branches?|locations?|offices?|stores?|plants?|shakha|शाखाएं|शाखा|ऑफिस|दुकान|ब्रांच)/i) ||
-      text.match(/(?:single office|1 office|single site|1 site|one site|single store|1 ही मुख्य ऑफिस|एक ही मुख्य ऑफिस|1 मुख्य ऑफिस|एक ऑफिस|1 ऑफिस|एक ही ऑफिस)/i) ||
+      text.match(/(?:single office|1 office|single site|1 site|one site|single store|one office|single workshop|single clinic|1 ही मुख्य ऑफिस|एक ही मुख्य ऑफिस|1 मुख्य ऑफिस|एक ऑफिस|1 ऑफिस|एक ही ऑफिस)/i) ||
       text.match(/(?:head office and|ho and)\s*(\d+)\s*(?:branches?|sites?)/i);
 
     if (sitesMatch) {
@@ -275,13 +276,13 @@ export class DeterministicExtractionService {
       merged.hasGstin = true;
       merged.gstin = gstinMatch[1].toUpperCase();
     } else if (
-      /gst hai|gst number hai|have gst|gst registered|gst available|registered under gst|yes gst|जीएसटी है/i.test(
+      /gst hai|gst number hai|have gst|gst registered|gst available|registered under gst|yes gst|जीएसटी है|^\s*(?:yes|haan|ha|have it)\s*$/i.test(
         text
       )
     ) {
       merged.hasGstin = true;
     } else if (
-      /no gst|gst nahi hai|without gst|unregistered|not registered for gst|nahi hai gst|जीएसटी नहीं है/i.test(
+      /no gst|gst nahi hai|without gst|unregistered|not registered for gst|nahi hai gst|जीएसटी नहीं है|^\s*(?:no|nahi|na|none|not yet|don't have)\s*$/i.test(
         text
       )
     ) {
