@@ -1,0 +1,626 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ==========================================
+// ENUMS
+// ==========================================
+
+enum Segment {
+  MICRO_RETAIL
+  PROFESSIONAL_OFFICE
+  MULTI_SITE
+  MANUFACTURING
+}
+
+enum ProductCategory {
+  CONNECTIVITY
+  COMMUNICATION
+  CLOUD_PRODUCTIVITY
+  SECURITY
+  IOT_PHYSICAL
+}
+
+enum QuoteStatus {
+  DRAFT
+  PRESENTED
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+enum OrderStatus {
+  ORDER_RECEIVED
+  KYC_VALIDATED
+  FEASIBILITY_CLEARED
+  TECHNICIAN_DISPATCHED
+  INSTALLED_AND_ACTIVE
+  CANCELLED
+}
+
+enum KycDecisionStatus {
+  PENDING
+  PROCESSING
+  VERIFIED
+  OVERRIDDEN_VERIFIED
+  MANUAL_REVIEW
+  REJECTED
+}
+
+enum DocumentType {
+  GST_CERTIFICATE
+  UDYAM_CERTIFICATE
+  SIGNATORY_ID
+  ADDRESS_PROOF
+  OTHER
+}
+
+enum DocumentQualityStatus {
+  ACCEPTABLE
+  FLAGGED_BLUR
+  FLAGGED_SKEW
+  FLAGGED_LOW_CONFIDENCE
+  UNREADABLE
+}
+
+enum ConsentType {
+  DPDP_KYC_VERIFICATION
+  MARKETING_COMMUNICATION
+  CREDIT_ASSESSMENT
+}
+
+enum TriggeredBy {
+  SYSTEM
+  CUSTOMER
+  PARTNER
+  TECHNICIAN
+  ADMIN_OVERRIDE
+}
+
+enum LeadStatus {
+  UNASSIGNED
+  ASSIGNED
+  CONTACTED
+  RECOVERED
+  CLOSED_LOST
+}
+
+enum ActivityType {
+  PHONE_CALL
+  IN_PERSON_VISIT
+  WHATSAPP_MESSAGE
+  NOTE
+  STATUS_CHANGE
+}
+
+enum StaffRole {
+  COMPLIANCE_OFFICER
+  ADMIN
+  OPERATIONS
+  TECHNICIAN
+  PARTNER
+}
+
+// ==========================================
+// MOCK GOVERNMENT REGISTRY MODELS
+// (Service-level lookups; decoupled from customer tables)
+// ==========================================
+
+model GstinRegistry {
+  gstin                      String       @id // 15-character official identifier
+  legalName                  String
+  tradeName                  String
+  constitution               String       // Proprietorship, LLP, Pvt Ltd, etc.
+  principalPlaceOfBusiness   String       @db.Text
+  state                      String
+  registrationDate           DateTime     @db.Date
+  status                     String       // Active, Cancelled, Suspended
+  createdAt                  DateTime     @default(now())
+
+  @@index([tradeName])
+  @@index([status])
+  @@index([state])
+}
+
+model UdyamRegistry {
+  udyamNumber                String       @id // UDYAM-XX-00-XXXXXXX
+  enterpriseName             String
+  enterpriseType             String       // Micro, Small, Medium
+  majorActivity              String       // Services, Trading, Manufacturing
+  nicDescription             String
+  state                      String
+  city                       String
+  dateOfRegistration         DateTime     @db.Date
+  createdAt                  DateTime     @default(now())
+
+  @@index([enterpriseName])
+  @@index([city])
+  @@index([state])
+}
+
+// ==========================================
+// BUSINESS & INTENT MODELS
+// ==========================================
+
+model Business {
+  id                         String                 @id @default(uuid())
+  legalName                  String
+  tradeName                  String
+  constitution               String                 // Proprietorship, LLP, etc.
+  segment                    Segment
+  city                       String
+  cityTier                   Int                    // 1 or 2
+  state                      String
+  pincode                    String?
+  hasGstin                   Boolean                @default(false)
+  gstin                      String?
+  hasUdyam                   Boolean                @default(false)
+  udyamNumber                String?
+  employeeCount              Int                    @default(1)
+  numSites                   Int                    @default(1)
+  annualTurnoverBand         String?
+  currentInternet            String?
+  currentProvider            String?
+  monthlySpendInr            Decimal?               @db.Decimal(12, 2)
+  
+  requirements               BusinessRequirement[]
+  conversations              Conversation[]
+  quotes                     Quote[]
+  orders                     Order[]
+  kycVerifications           KycVerification[]
+  consentRecords             ConsentRecord[]
+  
+  createdAt                  DateTime               @default(now())
+  updatedAt                  DateTime               @updatedAt
+
+  @@index([gstin])
+  @@index([udyamNumber])
+  @@index([segment])
+  @@index([city])
+}
+
+model BusinessRequirement {
+  id                         String       @id @default(uuid())
+  businessId                 String
+  business                   Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  rawPrompt                  String?      @db.Text
+  extractedJson              Json         // Validated structured intent
+  budgetMaxInr               Decimal?     @db.Decimal(12, 2)
+  connectivityType           String?
+  criticalNeed               String?
+  
+  quotes                     Quote[]
+  
+  createdAt                  DateTime     @default(now())
+  updatedAt                  DateTime     @updatedAt
+
+  @@index([businessId])
+}
+
+model Conversation {
+  id                         String       @id @default(uuid())
+  businessId                 String?
+  business                   Business?    @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  sessionToken               String       @unique
+  preferredLanguage          String       @default("Hindi")
+  messages                   Json         // Array of { sender, role, text, timestamp }
+  extractedEntities          Json?
+  isCompleted                Boolean      @default(false)
+  
+  createdAt                  DateTime     @default(now())
+  updatedAt                  DateTime     @updatedAt
+
+  @@index([sessionToken])
+}
+
+// ==========================================
+// NORMALIZED PRODUCT CATALOGUE & DEPENDENCIES
+// ==========================================
+
+model Product {
+  id                         String                 @id // P01, P02, etc.
+  category                   ProductCategory
+  productName                String
+  description                String                 @db.Text
+  unit                       String                 // per site, per line, per user
+  priceMinInr                Decimal                @db.Decimal(10, 2)
+  priceMaxInr                Decimal                @db.Decimal(10, 2)
+  oneTimeSetupInr            Decimal                @db.Decimal(10, 2)
+  minContractMonths          Int
+  minEmployees               Int                    @default(1)
+  minSites                   Int                    @default(1)
+  requiresGstin              Boolean                @default(false)
+  typicalInstallDays         Int                    @default(5)
+  isActive                   Boolean                @default(true)
+  
+  // Normalized Relations
+  availableCityTiers         ProductCityTier[]
+  targetSegments             ProductTargetSegment[]
+  prerequisites              ProductPrerequisite[]  @relation("ProductDependencies")
+  dependentProducts          ProductPrerequisite[]  @relation("PrerequisiteFor")
+  
+  quoteItems                 QuoteItem[]
+  orderItems                 OrderItem[]
+  
+  createdAt                  DateTime               @default(now())
+  updatedAt                  DateTime               @updatedAt
+
+  @@index([category])
+  @@index([requiresGstin])
+}
+
+model ProductCityTier {
+  id                         String       @id @default(uuid())
+  productId                  String
+  product                    Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  cityTier                   Int          // 1 or 2
+
+  @@unique([productId, cityTier])
+  @@index([cityTier])
+}
+
+model ProductTargetSegment {
+  id                         String       @id @default(uuid())
+  productId                  String
+  product                    Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  segment                    Segment
+
+  @@unique([productId, segment])
+  @@index([segment])
+}
+
+model ProductPrerequisite {
+  id                         String       @id @default(uuid())
+  productId                  String
+  product                    Product      @relation("ProductDependencies", fields: [productId], references: [id], onDelete: Cascade)
+  prerequisiteProductId      String
+  prerequisiteProduct        Product      @relation("PrerequisiteFor", fields: [prerequisiteProductId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, prerequisiteProductId])
+  @@index([productId])
+  @@index([prerequisiteProductId])
+}
+
+// ==========================================
+// QUOTE & COMMERCIAL MODELS
+// ==========================================
+
+model Quote {
+  id                         String               @id @default(uuid())
+  quoteNumber                String               @unique // QUO-2026-XXXXX
+  businessId                 String
+  business                   Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  requirementId              String?
+  requirement                BusinessRequirement? @relation(fields: [requirementId], references: [id], onDelete: SetNull)
+  status                     QuoteStatus          @default(DRAFT)
+  contractMonths             Int                  @default(12)
+  monthlyRecurringInr        Decimal              @db.Decimal(12, 2)
+  oneTimeSetupInr            Decimal              @db.Decimal(12, 2)
+  isIndicative               Boolean              @default(true)
+  validUntil                 DateTime
+  
+  items                      QuoteItem[]
+  order                      Order?
+  
+  createdAt                  DateTime             @default(now())
+  updatedAt                  DateTime             @updatedAt
+
+  @@index([quoteNumber])
+  @@index([businessId])
+}
+
+model QuoteItem {
+  id                         String       @id @default(uuid())
+  quoteId                    String
+  quote                      Quote        @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  productId                  String
+  product                    Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity                   Int          @default(1)
+  unitPriceInr               Decimal      @db.Decimal(10, 2)
+  unitSetupInr               Decimal      @db.Decimal(10, 2)
+  totalPriceInr              Decimal      @db.Decimal(12, 2)
+  
+  createdAt                  DateTime     @default(now())
+  updatedAt                  DateTime     @updatedAt
+
+  @@unique([quoteId, productId])
+  @@index([quoteId])
+  @@index([productId])
+}
+
+// ==========================================
+// KYC, AUDIT OVERRIDES & DPDP CONSENT
+// ==========================================
+
+model ConsentRecord {
+  id                         String            @id @default(uuid())
+  businessId                 String
+  business                   Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  kycVerificationId          String?
+  kycVerification            KycVerification?  @relation(fields: [kycVerificationId], references: [id], onDelete: SetNull)
+  consentType                ConsentType       @default(DPDP_KYC_VERIFICATION)
+  consentGiven               Boolean           @default(false)
+  purposeText                String            @db.Text
+  dataFieldsCovered          String
+  ipAddress                  String?
+  userAgent                  String?
+  consentTimestamp           DateTime          @default(now())
+  retentionDays              Int               @default(30)
+  revokedAt                  DateTime?
+
+  createdAt                  DateTime          @default(now())
+
+  @@index([businessId])
+}
+
+model KycVerification {
+  id                         String            @id @default(uuid())
+  businessId                 String
+  business                   Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  orderId                    String?           @unique
+  order                      Order?            @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  status                     KycDecisionStatus @default(PENDING)
+  
+  // Registry Verification State (service-level cached results)
+  gstinVerified              Boolean           @default(false)
+  gstinStatus                String?
+  udyamVerified              Boolean           @default(false)
+  nameMatchScore             Decimal           @default(0.0) @db.Decimal(5, 2)
+  addressMatchScore          Decimal           @default(0.0) @db.Decimal(5, 2)
+  signatoryMatchScore        Decimal           @default(0.0) @db.Decimal(5, 2)
+  
+  detectedDefects            Json              @default("[]")
+  reviewerNotes              String?           @db.Text
+  verifiedAt                 DateTime?
+  
+  documents                  KycDocument[]
+  consentRecords             ConsentRecord[]
+  auditLogs                  KycAuditLog[]
+  
+  createdAt                  DateTime          @default(now())
+  updatedAt                  DateTime          @updatedAt
+
+  @@index([businessId])
+  @@index([status])
+}
+
+model KycDocument {
+  id                         String                @id @default(uuid())
+  kycVerificationId          String
+  kycVerification            KycVerification       @relation(fields: [kycVerificationId], references: [id], onDelete: Cascade)
+  documentType               DocumentType
+  storagePath                String
+  originalFilename           String
+  mimeType                   String
+  fileSizeBytes              Int
+  
+  // Image Quality Assessment
+  rotationAngle              Decimal               @default(0.0) @db.Decimal(5, 2)
+  isBlurred                  Boolean               @default(false)
+  blurVariance               Decimal?              @db.Decimal(8, 2)
+  qualityStatus              DocumentQualityStatus @default(ACCEPTABLE)
+  ocrConfidence              Decimal?              @db.Decimal(5, 2)
+  
+  // OCR Data Separation
+  rawOcrText                 String                @db.Text // Raw unmodified OCR payload
+  parsedData                 Json                  // Cleaned/normalized key-value pairs
+  defectCode                 String?
+  
+  createdAt                  DateTime              @default(now())
+  updatedAt                  DateTime              @updatedAt
+
+  @@index([kycVerificationId])
+  @@index([documentType])
+}
+
+model KycAuditLog {
+  id                         String            @id @default(uuid())
+  kycVerificationId          String
+  kycVerification            KycVerification   @relation(fields: [kycVerificationId], references: [id], onDelete: Cascade)
+  action                     String            // MANUAL_OVERRIDE, STATUS_UPDATE, RESUBMISSION_REQUEST
+  previousStatus             KycDecisionStatus
+  newStatus                  KycDecisionStatus
+  authorizerUserId           String
+  authorizerRole             String            // COMPLIANCE_OFFICER, ADMIN
+  reasonCode                 String            // POA_VERIFIED_OFFLINE, EXCEPTION_APPROVED
+  reasonText                 String            @db.Text
+  overridePayloadHash        String            // Cryptographic tamper-evident hash
+  createdAt                  DateTime          @default(now())
+
+  @@index([kycVerificationId])
+  @@index([authorizerUserId])
+}
+
+// ==========================================
+// ORDER STATE MACHINE & PUBLIC TRACKER
+// ==========================================
+
+model Order {
+  id                         String            @id @default(uuid())
+  orderNumber                String            @unique // ORD-2026-XXXXX
+  trackingTokenHash          String            @unique // SHA-256 hash of the tracking secret
+  businessId                 String
+  business                   Business          @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  quoteId                    String            @unique
+  quote                      Quote             @relation(fields: [quoteId], references: [id], onDelete: Restrict)
+  partnerId                  String?
+  partner                    Partner?          @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  status                     OrderStatus       @default(ORDER_RECEIVED)
+  
+  contactName                String
+  contactPhone               String
+  installationAddress        String            @db.Text
+  city                       String
+  state                      String
+  pincode                    String
+  
+  calculatedSlaDays          Int               @default(5)
+  estimatedActiveDate        DateTime          @db.Date
+  actualActivatedDate        DateTime?         @db.Date
+  assignedTechnician         String?
+  technicianPhone            String?
+  
+  items                      OrderItem[]
+  events                     OrderEvent[]
+  kycVerification            KycVerification?
+  
+  createdAt                  DateTime          @default(now())
+  updatedAt                  DateTime          @updatedAt
+
+  @@index([orderNumber])
+  @@index([trackingTokenHash])
+  @@index([status])
+  @@index([businessId])
+}
+
+model OrderItem {
+  id                         String       @id @default(uuid())
+  orderId                    String
+  order                      Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId                  String
+  product                    Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity                   Int          @default(1)
+  unitPriceInr               Decimal      @db.Decimal(10, 2)
+  unitSetupInr               Decimal      @db.Decimal(10, 2)
+  siteIndex                  Int          @default(1)
+  
+  createdAt                  DateTime     @default(now())
+  updatedAt                  DateTime     @updatedAt
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model OrderEvent {
+  id                         String       @id @default(uuid())
+  orderId                    String
+  order                      Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fromStatus                 OrderStatus?
+  toStatus                   OrderStatus
+  eventName                  String
+  description                String       @db.Text
+  metadata                   Json?
+  triggeredBy                TriggeredBy  @default(SYSTEM)
+  
+  createdAt                  DateTime     @default(now())
+
+  @@index([orderId])
+  @@index([createdAt])
+}
+
+// ==========================================
+// PARTNER PORTAL & DROPPED LEADS
+// ==========================================
+
+model Partner {
+  id                         String         @id @default(uuid())
+  partnerCode                String         @unique // PTN-XXXXX
+  agencyName                 String
+  contactName                String
+  phone                      String
+  email                      String         @unique
+  territoryCity              String
+  commissionRate             Decimal        @default(10.0) @db.Decimal(5, 2)
+  isActive                   Boolean        @default(true)
+  
+  orders                     Order[]
+  assignedLeads              DroppedLead[]
+  leadActivities             LeadActivity[]
+  staffUsers                 StaffUser[]
+  
+  createdAt                  DateTime       @default(now())
+  updatedAt                  DateTime       @updatedAt
+
+  @@index([partnerCode])
+  @@index([territoryCity])
+}
+
+model DroppedLead {
+  id                         String         @id // Matches L00001 from smb_leads.csv
+  originalCreatedDate        DateTime?      @db.Date
+  leadSource                 String?
+  businessName               String
+  businessType               String?
+  segment                    Segment
+  city                       String
+  cityTier                   Int
+  state                      String
+  preferredLanguage          String
+  employeeCount              Int            @default(1)
+  numSites                   Int            @default(1)
+  annualTurnoverBand         String?
+  hasGstin                   Boolean        @default(false)
+  gstin                      String?
+  hasUdyam                   Boolean        @default(false)
+  udyamNumber                String?
+  currentInternet            String?
+  currentProvider            String?
+  monthlyTelecomSpendInr     Decimal?       @db.Decimal(12, 2)
+  productsOfInterest         String?
+  contactName                String
+  contactRole                String?
+  stageReached               String
+  dropReason                 String
+  
+  // Propensity Scoring
+  propensityScore            Decimal        @default(0.0) @db.Decimal(5, 2) // 0.00 to 100.00
+  propensityRank             String         @default("LOW") // HIGH, MEDIUM, LOW
+  recoveryPitch              String         @db.Text
+  
+  status                     LeadStatus     @default(UNASSIGNED)
+  assignedPartnerId          String?
+  assignedPartner            Partner?       @relation(fields: [assignedPartnerId], references: [id], onDelete: SetNull)
+  recoveryOrderId            String?
+  
+  activities                 LeadActivity[]
+  
+  createdAt                  DateTime       @default(now())
+  updatedAt                  DateTime       @updatedAt
+
+  @@index([stageReached])
+  @@index([propensityScore])
+  @@index([assignedPartnerId])
+  @@index([city])
+}
+
+model LeadActivity {
+  id                         String         @id @default(uuid())
+  droppedLeadId              String
+  droppedLead                DroppedLead    @relation(fields: [droppedLeadId], references: [id], onDelete: Cascade)
+  partnerId                  String?
+  partner                    Partner?       @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  activityType               ActivityType
+  notes                      String         @db.Text
+  outcome                    String?
+  followUpDate               DateTime?      @db.Date
+  
+  createdAt                  DateTime       @default(now())
+
+  @@index([droppedLeadId])
+}
+
+// ==========================================
+// AUTHENTICATED STAFF USER MODEL
+// ==========================================
+
+model StaffUser {
+  id                         String         @id @default(uuid())
+  email                      String         @unique
+  fullName                   String
+  role                       StaffRole
+  passwordHash               String         // Bcrypt hash; never plaintext
+  partnerId                  String?        // Populated for PARTNER role
+  partner                    Partner?       @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  isActive                   Boolean        @default(true)
+  
+  createdAt                  DateTime       @default(now())
+  updatedAt                  DateTime       @updatedAt
+
+  @@index([role])
+  @@index([partnerId])
+}

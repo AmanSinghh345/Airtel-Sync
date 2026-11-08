@@ -1,0 +1,21 @@
+{
+  "name": "udyamone-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
+    "test:smoke": "npm run test:smoke --workspace=@udyamone/api",
+    "db:migrate": "npm run prisma:migrate --workspace=@udyamone/api",
+    "db:migrate:deploy": "npx prisma migrate deploy --schema apps/api/prisma/schema.prisma",
+    "db:seed": "npm run prisma:seed --workspace=@udyamone/api",
+    "db:studio": "npm run prisma:studio --workspace=@udyamone/api"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  }
+}

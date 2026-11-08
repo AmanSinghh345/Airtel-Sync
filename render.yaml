@@ -1,0 +1,40 @@
+services:
+  # ==============================================================
+  # UdyamOne Backend API (NestJS + Prisma + OCR)
+  # ==============================================================
+  - type: web
+    name: udyamone-api
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: oregon
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATABASE_URL
+        sync: false # Production Neon PostgreSQL connection string
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_ISSUER
+        value: udyamone-auth
+      - key: JWT_AUDIENCE
+        value: udyamone-staff
+      - key: JWT_EXPIRES_IN
+        value: 8h
+      - key: CHALLENGE_REFERENCE_DATE
+        value: "2026-07-15"
+      - key: KYC_AUDIT_RETENTION_DAYS
+        value: "2555"
+      - key: GEMINI_API_KEY
+        sync: false # Optional: Gemini API Key for conversational AI
+      - key: FRONTEND_URL
+        sync: false # Vercel production frontend URL
+      - key: STORAGE_PATH
+        value: /app/uploads
+    disk:
+      name: udyamone-uploads
+      mountPath: /app/uploads
+      sizeGB: 1
